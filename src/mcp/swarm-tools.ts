@@ -4,6 +4,7 @@
 
 import type { MCPTool, MCPContext } from '../utils/types.js';
 import type { ILogger } from '../core/logger.js';
+import { getAvailableAgentTypes } from '../constants/agent-types.js';
 // Legacy import kept for compatibility
 // import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 // import { spawnSwarmAgent, getSwarmState } from '../cli/commands/swarm-spawn.js';
@@ -16,8 +17,39 @@ export interface SwarmToolContext extends MCPContext {
   monitor?: any;
 }
 
-export function createSwarmTools(logger: ILogger): MCPTool[] {
-  return [
+/**
+ * Enhance swarm tool schema with dynamic agent types
+ */
+async function enhanceSwarmToolWithAgentTypes(tool: MCPTool): Promise<MCPTool> {
+  const availableTypes = await getAvailableAgentTypes();
+  
+  // Clone the tool to avoid modifying the original
+  const enhancedTool = JSON.parse(JSON.stringify(tool));
+  
+  // Find and populate enum fields for agent types
+  function addEnumToAgentTypeFields(obj: any) {
+    if (typeof obj !== 'object' || obj === null) return;
+    
+    for (const [key, value] of Object.entries(obj)) {
+      if (typeof value === 'object' && value !== null) {
+        // Check if this is an agent type field
+        if (key === 'type' && typeof value === 'object' && (value as any).enum) {
+          const field = value as any;
+          if (field.type === 'string' && field.description?.includes('type of agent')) {
+            field.enum = availableTypes;
+          }
+        }
+        addEnumToAgentTypeFields(value);
+      }
+    }
+  }
+  
+  addEnumToAgentTypeFields(enhancedTool.inputSchema);
+  return enhancedTool;
+}
+
+export async function createSwarmTools(logger: ILogger): Promise<MCPTool[]> {
+  const tools = [
     // === LEGACY SWARM TOOLS ===
     {
       name: 'dispatch_agent',
@@ -701,6 +733,13 @@ export function createSwarmTools(logger: ILogger): MCPTool[] {
       },
     },
   ];
+
+  // Enhance tools with dynamic agent types
+  const enhancedTools = await Promise.all(
+    tools.map(tool => enhanceSwarmToolWithAgentTypes(tool))
+  );
+
+  return enhancedTools;
 }
 
 // Legacy exports for backward compatibility
@@ -712,8 +751,8 @@ export const dispatchAgentTool = {
     properties: {
       type: {
         type: 'string',
-        enum: ['researcher', 'coder', 'analyst', 'reviewer', 'coordinator'],
-        description: 'The type of agent to spawn',
+        // Note: enum will be populated dynamically at runtime
+        description: 'The type of agent to spawn (loaded dynamically from .claude/agents/)',
       },
       task: {
         type: 'string',
